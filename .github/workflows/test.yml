@@ -1,0 +1,85 @@
+name: Hotfix Workflow
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - stage  # or main, depending on your branching strategy
+
+jobs:
+  create-pr-dev:
+    if: github.event.pull_request.merged == true && contains(github.head_ref, 'hotfix/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # Fetch all history for all branches and tags
+      
+      - name: Fetch all branches
+        run: |
+          git fetch --all
+          git checkout ${{ github.head_ref }}
+          git branch -a
+      
+      - name: Debug information
+        run: |
+          echo "Current branch: ${{ github.head_ref }}"
+          echo "Target branch: dev"
+          git log --oneline --graph --decorate --all -n 10
+      
+      - name: Check for commits
+        id: check_commits
+        run: |
+          git fetch origin dev:dev
+          COMMIT_COUNT=$(git rev-list --count dev..${{ github.head_ref }})
+          if [ $COMMIT_COUNT -gt 0 ]; then
+            echo "has_commits=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_commits=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Create PR to merge Hotfix branch into dev
+        id: create_pr
+        if: steps.check_commits.outputs.has_commits == 'true'
+        run: |
+          PR_URL=$(gh pr create --title "Auto Merge Hotfix ${{ github.head_ref }} into dev" --body "Auto-generated PR to merge hotfix ${{ github.head_ref }} into dev" --base dev --head ${{ github.head_ref }})
+          echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
+          PR_NUMBER=$(echo $PR_URL | awk -F'/' '{print $NF}')
+          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}  # PAT for creating the PR
+          
+      # Generate a GitHub App token for PR approval (App acts as separate entity)
+      - name: Generate GitHub App token
+        id: generate_token
+        if: steps.create_pr.outputs.pr_number != ''
+        uses: tibdex/github-app-token@v1
+        with:
+          app_id: ${{ secrets.APP_ID }}
+          private_key: ${{ secrets.APP_PRIVATE_KEY }}
+          repository: ${{ github.repository }}
+          
+      - name: Auto approve PR using GitHub App
+        if: steps.create_pr.outputs.pr_number != ''
+        run: |
+          # Wait a moment for GitHub to process the PR creation
+          sleep 5
+          
+          # Approve the PR using the GitHub App token
+          gh pr review ${{ steps.create_pr.outputs.pr_number }} --approve -b "Auto-approving PR from hotfix branch to dev by GitHub App"
+        env:
+          GITHUB_TOKEN: ${{ steps.generate_token.outputs.token }}
+          
+      - name: Auto merge PR after approval
+        if: steps.create_pr.outputs.pr_number != ''
+        run: |
+          # Merge the PR using the same GitHub App token
+          gh pr merge ${{ steps.create_pr.outputs.pr_number }} --merge --delete-branch
+        env:
+          GITHUB_TOKEN: ${{ steps.generate_token.outputs.token }}
+      
+      - name: Notify if no commits to merge
+        if: steps.check_commits.outputs.has_commits == 'false'
+        run: |
+          echo "No new commits to merge from ${{ github.head_ref }} into dev. Skipping PR creation."

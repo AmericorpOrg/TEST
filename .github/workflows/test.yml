@@ -37,16 +37,6 @@ jobs:
             echo "has_commits=false" >> $GITHUB_OUTPUT
           fi
           
-      # Generate a GitHub App token first (before PR creation)
-      - name: Generate GitHub App token
-        id: generate_token
-        if: steps.check_commits.outputs.has_commits == 'true'
-        uses: tibdex/github-app-token@v1
-        with:
-          app_id: ${{ secrets.APP_ID }}
-          private_key: ${{ secrets.APP_PRIVATE_KEY }}
-          repository: ${{ github.repository }}
-          
       - name: Create PR to merge Hotfix branch into dev
         id: create_pr
         if: steps.check_commits.outputs.has_commits == 'true'
@@ -58,7 +48,17 @@ jobs:
           echo "PR number: $PR_NUMBER"
           echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
         env:
-          GITHUB_TOKEN: ${{ steps.generate_token.outputs.token }}
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+          
+      # Generate a GitHub App token for PR approval (App acts as separate entity)
+      - name: Generate GitHub App token
+        id: generate_token
+        if: steps.create_pr.outputs.pr_number != ''
+        uses: tibdex/github-app-token@v1
+        with:
+          app_id: ${{ secrets.APP_ID }}
+          private_key: ${{ secrets.APP_PRIVATE_KEY }}
+          repository: ${{ github.repository }}
           
       - name: Auto approve PR using GitHub App
         if: steps.create_pr.outputs.pr_number != ''

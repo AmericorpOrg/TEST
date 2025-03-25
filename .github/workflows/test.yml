@@ -37,6 +37,16 @@ jobs:
             echo "has_commits=false" >> $GITHUB_OUTPUT
           fi
           
+      # Generate token for the existing app to create PR
+      - name: Generate Existing App token for PR creation
+        id: generate_creator_token
+        if: steps.check_commits.outputs.has_commits == 'true'
+        uses: tibdex/github-app-token@v1
+        with:
+          app_id: ${{ secrets.APP_ID }}
+          private_key: ${{ secrets.APP_PRIVATE_KEY }}
+          repository: ${{ github.repository }}
+          
       - name: Create PR to merge Hotfix branch into dev
         id: create_pr
         if: steps.check_commits.outputs.has_commits == 'true'
@@ -48,30 +58,30 @@ jobs:
           echo "PR number: $PR_NUMBER"
           echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.generate_creator_token.outputs.token }}
           
-      # Generate a GitHub App token for PR approval (App acts as separate entity)
-      - name: Generate GitHub App token
-        id: generate_token
+      # Generate token for the new approver app
+      - name: Generate Approver App token
+        id: generate_approver_token
         if: steps.create_pr.outputs.pr_number != ''
         uses: tibdex/github-app-token@v1
         with:
-          app_id: ${{ secrets.APP_ID }}
-          private_key: ${{ secrets.APP_PRIVATE_KEY }}
+          app_id: ${{ secrets.APPROVER_APP_ID }}
+          private_key: ${{ secrets.APPROVER_APP_PRIVATE_KEY }}
           repository: ${{ github.repository }}
           
-      - name: Auto approve PR using GitHub App
+      - name: Auto approve PR using Approver App
         if: steps.create_pr.outputs.pr_number != ''
         run: |
           # Wait a moment for GitHub to process the PR creation
           sleep 5
           
-          # Approve the PR using the GitHub App token
+          # Approve the PR using the Approver App token
           gh pr review ${{ steps.create_pr.outputs.pr_number }} --approve -b "Auto-approving PR from hotfix branch to dev by GitHub App"
           
           echo "PR #${{ steps.create_pr.outputs.pr_number }} has been auto-approved. Manual merge is required."
         env:
-          GITHUB_TOKEN: ${{ steps.generate_token.outputs.token }}
+          GITHUB_TOKEN: ${{ steps.generate_approver_token.outputs.token }}
           
       - name: Notify if no commits to merge
         if: steps.check_commits.outputs.has_commits == 'false'
